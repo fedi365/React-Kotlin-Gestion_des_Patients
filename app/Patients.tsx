@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { jwtDecode } from 'jwt-decode';
+import { useRouter } from 'expo-router';
 
 const API_URL = 'http://192.168.1.202:8080/patients';
 
@@ -24,14 +25,13 @@ type Patient = {
     codeAssure: string;
 };
 
-type UserRole = 'ROLE_USER' | 'ROLE_ADMIN'; // Adaptez selon ce que renvoie votre backend
+type UserRole = 'ROLE_USER' | 'ROLE_ADMIN';
 
 type JwtPayload = {
     sub: string;
     roles: UserRole[];
     exp: number;
     iat: number;
-    // autres champs du token...
 };
 
 export default function PatientsScreen() {
@@ -44,23 +44,39 @@ export default function PatientsScreen() {
     const [userRole, setUserRole] = useState<UserRole | null>(null);
     const [isLoading, setIsLoading] = useState(true);
 
+    const router = useRouter();
+
     useEffect(() => {
         const loadTokenAndRole = async () => {
             try {
                 const storedToken = await AsyncStorage.getItem('jwt');
+
+                if (!storedToken) {
+                    // 🔹 Pas de token → redirection vers Login
+                    router.replace('/Login');
+                    return;
+                }
+
                 setToken(storedToken);
 
-                if (storedToken) {
-                    try {
-                        const decoded = jwtDecode<JwtPayload>(storedToken);
-                        // Supposons que le premier rôle dans le tableau est le rôle principal
-                        const role = decoded.roles[0];
-                        setUserRole(role);
-                        await fetchPatients(storedToken);
-                    } catch (decodeError) {
-                        console.error('Erreur de décodage du token:', decodeError);
-                        Alert.alert('Erreur', 'Problème d\'authentification');
+                try {
+                    const decoded = jwtDecode<JwtPayload>(storedToken);
+                    const now = Date.now() / 1000;
+
+                    if (decoded.exp < now) {
+                        // 🔹 Token expiré → redirection
+                        await AsyncStorage.removeItem('jwt');
+                        router.replace('/Login');
+                        return;
                     }
+
+                    const role = decoded.roles[0];
+                    setUserRole(role);
+                    await fetchPatients(storedToken);
+                } catch (decodeError) {
+                    console.error('Erreur de décodage du token:', decodeError);
+                    await AsyncStorage.removeItem('jwt');
+                    router.replace('/Login');
                 }
             } catch (error) {
                 console.error('Erreur de chargement du token:', error);
@@ -143,6 +159,9 @@ export default function PatientsScreen() {
             setUserRole(null);
             setPatients([]);
             Alert.alert('Déconnexion', 'Vous avez été déconnecté avec succès');
+
+            // 🔹 Redirection vers Login
+            router.replace('/Login');
         } catch (error) {
             console.error('Erreur lors de la déconnexion:', error);
             Alert.alert('Erreur', 'Problème lors de la déconnexion');
@@ -181,7 +200,6 @@ export default function PatientsScreen() {
                             ListEmptyComponent={<Text style={styles.emptyText}>Aucun patient trouvé.</Text>}
                         />
 
-                        {/* Afficher le formulaire seulement pour les ADMIN */}
                         {userRole === 'ROLE_ADMIN' && (
                             <>
                                 <Text style={styles.subtitle}>➕ Ajouter un patient</Text>
@@ -204,7 +222,6 @@ export default function PatientsScreen() {
                                         placeholder="CIN"
                                         style={styles.input}
                                         value={cin}
-                                        onChangeText={setCin}
                                         keyboardType="default"
                                     />
                                     <TextInput
